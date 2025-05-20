@@ -34,7 +34,7 @@ col1, col2 = st.columns(2)
 with col1:
     kategoriya = st.radio("📶 Foydalanuvchi kategoriyasi", ['Uy', 'Ofis', 'Korxona'])
 with col2:
-    foydalanuvchi_soni = st.slider("👥 Foydalanuvchilar soni", 1, 50, 10)
+    foydalanuvchi_soni = st.slider("👥 Foydalanuvchilar soni", 1, 20, 10)
 
 min_t, max_t = kategoriya_traffic[kategoriya]
 trafik = np.random.uniform(min_t, max_t, foydalanuvchi_soni)
@@ -56,7 +56,7 @@ ax_bar.set_ylabel("Soatlik trafik (Gbps)")
 ax_bar.grid(True)
 ax_bar.legend()
 
-if foydalanuvchi_soni > 20:
+if foydalanuvchi_soni > 15:
     ax_bar.text(0.5, 0.97, "⚠️ Foydalanuvchi soni 20 dan oshgan!", transform=ax_bar.transAxes,
                 fontsize=12, color='red', ha='center', bbox=dict(facecolor='white', alpha=0.8))
 if yuk > 1.0:
@@ -78,7 +78,7 @@ ax_pie.pie(values, labels=labels, autopct='%.1f%%', colors=colors, startangle=14
 ax_pie.set_title("Tizim yuklanish holati")
 
 # Trend chizma
-foydalanuvchi_range = np.arange(1, 51)
+foydalanuvchi_range = np.arange(1, 20)
 trend_yuklama = []
 for n in foydalanuvchi_range:
     t = np.random.uniform(min_t, max_t, n)
