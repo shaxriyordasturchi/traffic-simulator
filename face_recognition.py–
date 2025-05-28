@@ -1,0 +1,69 @@
+import os
+import face_recognition
+import numpy as np
+from datetime import datetime
+from config import ENCODING_DIR, TELEGRAM_BOT_TOKEN, ADMIN_CHAT_ID
+from telegram_utils import send_telegram_message
+import cv2
+import base64
+
+# Encoded yuzlar va foydalanuvchi ma'lumotlari
+def load_known_faces():
+    known_encodings = []
+    known_names = []
+
+    for filename in os.listdir(ENCODING_DIR):
+        if filename.endswith(".npy"):
+            filepath = os.path.join(ENCODING_DIR, filename)
+            encoding = np.load(filepath)
+            name = filename.replace(".npy", "")
+            known_encodings.append(encoding)
+            known_names.append(name)
+    
+    return known_encodings, known_names
+
+# Kameradan olingan rasmni tekshirish
+def recognize_face(frame):
+    known_encodings, known_names = load_known_faces()
+
+    rgb_frame = frame[:, :, ::-1]
+    face_locations = face_recognition.face_locations(rgb_frame)
+    face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
+
+    for face_encoding in face_encodings:
+        matches = face_recognition.compare_faces(known_encodings, face_encoding)
+        face_distances = face_recognition.face_distance(known_encodings, face_encoding)
+
+        if len(face_distances) == 0:
+            continue
+
+        best_match_index = np.argmin(face_distances)
+        if matches[best_match_index]:
+            return known_names[best_match_index], True
+
+    # Tanilmagan yuz topildi
+    send_telegram_message(
+        ADMIN_CHAT_ID,
+        "⚠️ <b>Tanilmagan yuz aniqlandi!</b>\nIltimos, tizimni tekshiring!"
+    )
+    return "Unknown", False
+
+# Rasmni Telegramga yuborish (tanilmagan yuz uchun)
+def send_unknown_face_to_telegram(frame):
+    _, buffer = cv2.imencode('.jpg', frame)
+    image_base64 = base64.b64encode(buffer).decode()
+
+    try:
+        import requests
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto",
+            data={
+                "chat_id": ADMIN_CHAT_ID,
+                "caption": "⚠️ Tanilmagan foydalanuvchi kamerada aniqlandi"
+            },
+            files={
+                "photo": ("unknown.jpg", buffer.tobytes())
+            }
+        )
+    except Exception as e:
+        print("Telegram yuborish xatolik:", e)
