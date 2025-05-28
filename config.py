@@ -1,0 +1,6 @@
+
+TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN"
+ADMIN_CHAT_ID = "YOUR_ADMIN_CHAT_ID"
+ENCODING_DIR = "encodings"
+DB_PATH = "worktime.db"
+TIMEZONE = "Asia/Tashkent"
