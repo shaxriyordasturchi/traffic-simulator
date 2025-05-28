@@ -1,67 +1,93 @@
 import streamlit as st
+from streamlit_webrtc import webrtc_streamer
 import cv2
 import numpy as np
 import face_recognition
-from utils import get_current_time, load_encodings
-from db import init_db, mark_login, mark_logout, get_chat_id
-from telegram_bot import send_telegram_message, ADMIN_CHAT_ID
+import os
+import pickle
+from datetime import datetime
+from telegram_utils import send_telegram_message, send_telegram_photo
 
-init_db()
-st.set_page_config("Yuz bilan kirish/chiqish", layout="centered")
-st.title("🧑‍💼 Xodim Yuz Tanish Paneli")
+# ———— Sozlamalar ————
+ENCODINGS_DIR = "encodings"
+DB_PATH = "worktime.db"  # Bu keyinchalik kerak bo'ladi, hozir faqat saqlamaymiz
 
-option = st.selectbox("Amalni tanlang:", ["Ishga Kirish", "Ishdan Chiqish"])
+# Vaqt olish funksiyasi
+def get_current_time():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-if st.button("📷 Yuzni Skanirovka Qilish"):
-    st.info("⏳ Kamera ishga tushdi. Yuzingizni ko‘rsating...")
+# Yuzni tanish uchun oldindan saqlangan kodlar va ma'lumotlarni yuklaymiz
+def load_known_faces():
+    known_encodings = []
+    known_users = []
+    if not os.path.exists(ENCODINGS_DIR):
+        os.makedirs(ENCODINGS_DIR)
+    for file in os.listdir(ENCODINGS_DIR):
+        if file.endswith(".pkl"):
+            with open(os.path.join(ENCODINGS_DIR, file), "rb") as f:
+                data = pickle.load(f)
+                known_encodings.append(data['encoding'])
+                known_users.append(data)
+    return known_encodings, known_users
 
-    cap = cv2.VideoCapture(0)
-    stframe = st.empty()
+# Webcamedan har bir frame uchun yuzni aniqlash va qayta ishlash
+def process_frame(frame, known_encodings, known_users):
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    face_locations = face_recognition.face_locations(rgb_frame)
+    face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
 
-    known_encodings, known_users = load_encodings()
-    result = "Hech kim tanilmadi"
-    recognized = False
+    for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
+        matches = face_recognition.compare_faces(known_encodings, face_encoding, tolerance=0.5)
+        face_distances = face_recognition.face_distance(known_encodings, face_encoding)
+        if len(face_distances) == 0:
+            continue
+        best_match_index = np.argmin(face_distances)
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+        if matches[best_match_index]:
+            user = known_users[best_match_index]
+            name = f"{user['firstname']} {user['lastname']}"
+            color = (0, 255, 0)  # yashil - topildi
+            label = f"{name} - Tanildi"
+            # Telegramga xabar va foto yuborish (bu yerda faqat xabar)
+            send_telegram_message(f"✅ {name} ishga kirdi\n🕒 {get_current_time()}")
 
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        face_locations = face_recognition.face_locations(rgb)
-        face_encodings = face_recognition.face_encodings(rgb, face_locations)
+        else:
+            name = "Noma'lum"
+            color = (0, 0, 255)  # qizil - topilmadi
+            label = "Noma'lum yuz aniqlangan!"
+            # Telegramga noma'lum yuz haqida xabar
+            send_telegram_message(f"⚠️ Noma'lum yuz aniqlangan!\n🕒 {get_current_time()}")
+            # Rasmni vaqt nomi bilan saqlaymiz
+            photo_path = f"unknown_faces/unknown_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+            if not os.path.exists("unknown_faces"):
+                os.makedirs("unknown_faces")
+            cv2.imwrite(photo_path, frame)
+            send_telegram_photo(photo_path, caption="⚠️ Noma'lum yuz!")
 
-        for face_encoding in face_encodings:
-            matches = face_recognition.compare_faces(known_encodings, face_encoding, tolerance=0.5)
-            face_distances = face_recognition.face_distance(known_encodings, face_encoding)
-            if len(face_distances) == 0:
-                continue
-            best_match_index = np.argmin(face_distances)
-            if matches[best_match_index]:
-                user = known_users[best_match_index]
-                now = get_current_time()
-                if option == "Ishga Kirish":
-                    mark_login(user, now)
-                    msg = f"✅ <b>{user['firstname']} {user['lastname']}</b> ishga KIRDI\n🕒 {now}"
-                else:
-                    mark_logout(user, now)
-                    msg = f"❌ <b>{user['firstname']} {user['lastname']}</b> ishdan CHIQDI\n🕒 {now}"
-                chat_id = get_chat_id(user['username'], ADMIN_CHAT_ID)
-                send_telegram_message(chat_id, msg)
-                result = f"{user['firstname']} {user['lastname']} aniqlandi"
-                recognized = True
-                break
-            else:
-                continue
+        # Yuz atrofida to'rtburchak chizamiz
+        cv2.rectangle(frame, (left, top), (right, bottom), color, 2)
+        # Label qo'yamiz
+        cv2.putText(frame, label, (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
-        stframe.image(frame, channels="BGR")
-        if recognized or cv2.waitKey(1) & 0xFF == ord("q"):
-            break
+    return frame
 
-    cap.release()
-    cv2.destroyAllWindows()
+# ———— Streamlit interfeysi ————
 
-    if not recognized:
-        msg = f"🚨 Tanilmagan yuz aniqlandi. Kamera vaqti: {get_current_time()}"
-        send_telegram_message(ADMIN_CHAT_ID, msg)
-    st.success(result)
+st.set_page_config(page_title="Yuz bilan kirish", layout="centered")
+st.title("🧑‍💼 Xodim yuzni tanib kirish tizimi")
+
+option = st.selectbox("Amalni tanlang:", ["Ishga kirish", "Ishdan chiqish"])
+
+if st.button("Kamerani ishga tushurish va yuzni tanish"):
+    known_encodings, known_users = load_known_faces()
+    if len(known_encodings) == 0:
+        st.warning("Yuz kodlari topilmadi! 'encodings' papkasiga yuz kodlarini yuklang.")
+    else:
+        st.info("Kamera ishga tushdi. Yuzingizni ko'rsating...")
+        
+        def video_frame_callback(frame):
+            img = frame.to_ndarray(format="bgr24")
+            img = process_frame(img, known_encodings, known_users)
+            return img
+
+        webrtc_streamer(key="face-recognition", video_frame_callback=video_frame_callback)
